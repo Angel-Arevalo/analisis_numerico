@@ -5,7 +5,7 @@ using Markdown
 using InteractiveUtils
 
 # ╔═╡ a12c089d-621c-44cf-ab6a-86b1b1ff7d13
-using Random, Statistics, Printf
+using Random, Statistics, Printf, DataFrames
 
 # ╔═╡ 570241bb-942a-43df-8572-6af37d737bc7
 md"
@@ -142,23 +142,38 @@ end
 (pendiente_constante = pendiente_log(ns, errores_constante), pendiente_aleatoria = pendiente_log(ns, errores_aleatoria))
 
 # ╔═╡ 1c4b3be9-10d3-413c-826a-90ce91917dde
-md"
+begin
+
+    function clean_df(dataframe)
+        df_formatted = copy(dataframe)
+        
+
+        for col in names(df_formatted)
+            if eltype(df_formatted[!, col]) <: AbstractFloat
+                df_formatted[!, col] = [@sprintf("%.2e", x) for x in df_formatted[!, col]]
+            end
+        end
+        
+        io = IOBuffer()
+        show(io, MIME("text/html"), df_formatted; eltypes=false, show_row_number=false)
+        return HTML(String(take!(io)))
+    end
+
+    df = DataFrame(
+        "n" => ns,
+        "Suma constante" => errores_constante,
+        "Suma aleatoria" => errores_aleatoria
+    )
+
+md"""
 ## 5. Resultados y explicación
 
-Estos fueron los resultados que obtuve al correr el código de arriba (los valores del caso 1 son exactos porque no dependen de ningún número aleatorio; los del caso 2 son el promedio de las 30 corridas):
+Estos fueron los resultados que obtuve al correr el código de arriba (los valores del caso 1 son exactos porque no dependen de ningún número aleatorio; los del caso 2 son el promedio de las 30 corridas): $(clean_df(df))
 
-| $n$ | error caso 1 (mismo signo) | error caso 2 (signo aleatorio, promedio) |
-|---|---|---|
-| 10 | $1.04\times10^{-7}$ | $1.09\times10^{-8}$ |
-| 100 | $1.76\times10^{-6}$ | $5.76\times10^{-8}$ |
-| 1 000 | $9.55\times10^{-4}$ | $8.75\times10^{-7}$ |
-| 10 000 | $9.71\times10^{-2}$ | $6.56\times10^{-6}$ |
-| 100 000 | $1.44$ | $7.83\times10^{-5}$ |
-| 1 000 000 | $9.58\times10^{2}$ | $3.96\times10^{-4}$ |
+    
+Lo primero que me llamó la atención es que en el caso 1, con $n = 1000000$, el resultado que da la máquina es $100958.34375$ cuando debería ser $100000.0015\ldots$, es decir, un error absoluto de casi mil y un error relativo de casi el $1\%$. Eso claramente NO es del tamaño de $\epsilon_{32} \approx 1.19\times 10^{-7}$ como yo pensaba, ni siquiera es del tamaño de $n \cdot \epsilon_{32} \approx 0.119$. El error real es miles de veces más grande que mi predicción.
 
-Lo primero que me llamó la atención es que en el caso 1, con $n = 1\,000\,000$, el resultado que da la máquina es $100958.34375$ cuando debería ser $100000.0015\ldots$, es decir, un error absoluto de casi mil y un error relativo de casi el $1\%$. Eso claramente NO es del tamaño de $\epsilon_{32} \approx 1.19\times 10^{-7}$ como yo pensaba, ni siquiera es del tamaño de $n \cdot \epsilon_{32} \approx 0.119$. El error real es miles de veces más grande que mi predicción.
-
-En cambio, en el caso 2, con el mismo $n = 1\,000\,000$, el error promedio es $3.96\times10^{-4}$: muchísimo más chico que en el caso 1, a pesar de que en los dos casos se hicieron exactamente la misma cantidad de sumas en Float32.
+En cambio, en el caso 2, con el mismo $n = 1\,000\,000$, el error promedio es \$(@sprintf("%.2e", errores_aleatoria[6])): muchísimo más pequeño que en el caso 1, a pesar de que en los dos casos se hicieron exactamente la misma cantidad de sumas en Float32.
 
 Para entender qué tan rápido crece cada error, ajusté una recta a los puntos de la tabla en escala log-log (es decir, a $\log_{10}(n)$ contra $\log_{10}(\text{error})$, que es lo que hace la función `pendiente_log`). La pendiente de esa recta me dice a qué potencia de $n$ es proporcional el error: si el error fuera proporcional a $n$, la pendiente debería salir $1$; si fuera proporcional a $n^2$, debería salir $2$. Obtuve:
 
@@ -176,13 +191,14 @@ $$\text{error total} \approx \epsilon_{32} \cdot c \cdot (1 + 2 + \cdots + n) = 
 y esa suma $1+2+\cdots+n$ crece proporcional a $n^2$, no a $n$. Ahí está mi error de predicción: yo estaba pensando el épsilon de máquina como si fuera un error absoluto fijo del tamaño de una sola suma, sin darme cuenta de que ese error depende de qué tan grande sea el acumulador en ese momento, y el acumulador mismo va creciendo.
 
 En el caso 2, el acumulador no crece de forma sostenida: como a veces se suma $c$ y a veces se resta $c$, el acumulador se queda dando vueltas cerca de valores mucho más chicos que $n \cdot c$. Como el acumulador es más chico, cada redondeo individual también es más chico, porque de nuevo el error de redondeo depende del tamaño del número, no es fijo. Y además, como el signo de lo que se suma cambia aleatoriamente, el redondeo de un paso no siempre 'apunta' en la misma dirección que el del paso anterior, entonces hay cancelación parcial entre los errores en lugar de que se acumulen todos igual. Por eso el error crece mucho más lento, cercano a $n$.
-"
+"""
+end
 
 # ╔═╡ a535cbe1-ff5b-4fe1-9704-b14a3024dec5
 md"
 ## 6. Conclusión
 
-El orden y el signo con el que se suman los números sí importa, y no de forma chiquita: en mi experimento, sumar siempre en la misma dirección hizo que el error creciera casi con el cuadrado de $n$, mientras que alternar signos aleatoriamente hizo que el error creciera solamente cerca de proporcional a $n$. Con $n = 1\,000\,000$ eso fue la diferencia entre un error de $9.58\times10^{2}$ y uno de $5.88\times10^{-4}$: casi un millón de veces más grande en el caso 1.
+El orden y el signo con el que se suman los números sí importa, y no de forma chiquita: en mi experimento, sumar siempre en la misma dirección hizo que el error creciera casi con el cuadrado de $n$, mientras que alternar signos aleatoriamente hizo que el error creciera solamente cerca de proporcional a $n$. 
 
 La razón de fondo, según lo que puedo explicar con lo visto en clase, es que el épsilon de máquina mide una precisión **relativa**, no un error absoluto fijo. Como el acumulador del caso 1 crece de forma sostenida, el tamaño del redondeo también va creciendo con él, y como todos esos redondeos van en la misma dirección, se van sumando entre sí. En el caso 2 el acumulador se queda mucho más chico en promedio (porque los signos se cancelan) y además los propios errores de redondeo se cancelan parcialmente entre ellos.
 "
@@ -203,7 +219,7 @@ md"
 ## Uso de inteligencia artificial
 
 - **Asistente utilizado:** Claude.
-- **Para qué lo utilicé:** principalmente para hacer código de julia porque es un lenguaje totalmente nuevo para mí, además de resolver con flotantes de mayor magnitud para mas presición en el informe.  
+- **Para qué lo utilicé:** principalmente para hacer código de julia porque es un lenguaje totalmente nuevo para mí, instruyendome en el uso de flotantes de mayor magnitud para mas presición en el informe y cómo usar las variables del código dentro de los formatos de markdown.  
 
 - **Preguntas importantes que le hice:**
   1. Le pregunté cómo medir qué tanto estaba relacionandose la cantidad de veces que se suma la variable con el error acumulado; de ahí me sugirió la función pendiente_log() y se dice que un número cercano a 1 es una relación lineal.
@@ -216,9 +232,13 @@ md"
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+
+[compat]
+DataFrames = "~1.8.2"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -227,16 +247,105 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "222ce4b6ad9a64f0226d6727cd8d0fc2ec843983"
+project_hash = "1e9b901433b1738bd8633f0992e9887db04c721c"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 version = "1.11.0"
 
+[[deps.Base64]]
+uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+version = "1.11.0"
+
+[[deps.Compat]]
+deps = ["TOML", "UUIDs"]
+git-tree-sha1 = "9d8a54ce4b17aa5bdce0ea5c34bc5e7c340d16ad"
+uuid = "34da2185-b29b-5c13-b0c7-acf172513d20"
+version = "4.18.1"
+weakdeps = ["Dates", "LinearAlgebra"]
+
+    [deps.Compat.extensions]
+    CompatLinearAlgebraExt = "LinearAlgebra"
+
 [[deps.CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 version = "1.3.0+1"
+
+[[deps.Crayons]]
+git-tree-sha1 = "54b76cbb40d9a0f5368c880725b2f141da77c94f"
+uuid = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
+version = "4.2.0"
+
+[[deps.DataAPI]]
+git-tree-sha1 = "abe83f3a2f1b857aac70ef8b269080af17764bbe"
+uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
+version = "1.16.0"
+
+[[deps.DataFrames]]
+deps = ["Compat", "DataAPI", "DataStructures", "Future", "InlineStrings", "InvertedIndices", "IteratorInterfaceExtensions", "LinearAlgebra", "Markdown", "Missings", "PooledArrays", "PrecompileTools", "PrettyTables", "Printf", "Random", "Reexport", "SentinelArrays", "SortingAlgorithms", "Statistics", "TableTraits", "Tables", "Unicode"]
+git-tree-sha1 = "5fab31e2e01e70ad66e3e24c968c264d1cf166d6"
+uuid = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+version = "1.8.2"
+
+[[deps.DataStructures]]
+deps = ["OrderedCollections"]
+git-tree-sha1 = "b0bc6d2cad1fed8b7fd59a1551a991cb3d2809e6"
+uuid = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+version = "0.19.6"
+
+[[deps.DataValueInterfaces]]
+git-tree-sha1 = "bfc1187b79289637fa0ef6d4436ebdfe6905cbd6"
+uuid = "e2d170a0-9d28-54be-80f0-106bbe20a464"
+version = "1.0.0"
+
+[[deps.Dates]]
+deps = ["Printf"]
+uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
+version = "1.11.0"
+
+[[deps.Future]]
+deps = ["Random"]
+uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
+version = "1.11.0"
+
+[[deps.InlineStrings]]
+git-tree-sha1 = "06b65886c7577a3784d616e29f1302c2e36e389d"
+uuid = "842dd82b-1e85-43dc-bf29-5d0ee9dffc48"
+version = "1.4.6"
+
+    [deps.InlineStrings.extensions]
+    ArrowTypesExt = "ArrowTypes"
+    ParsersExt = "Parsers"
+
+    [deps.InlineStrings.weakdeps]
+    ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
+    Parsers = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
+
+[[deps.InteractiveUtils]]
+deps = ["Markdown"]
+uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+version = "1.11.0"
+
+[[deps.InvertedIndices]]
+git-tree-sha1 = "6da3c4316095de0f5ee2ebd875df8721e7e0bdbe"
+uuid = "41ab1584-1d38-5bbf-9106-f11c6c58b48f"
+version = "1.3.1"
+
+[[deps.IteratorInterfaceExtensions]]
+git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
+uuid = "82899510-4779-5014-852e-03e436cf321d"
+version = "1.0.0"
+
+[[deps.JuliaSyntaxHighlighting]]
+deps = ["StyledStrings"]
+uuid = "ac6e5ff7-fb65-4e79-a425-ec3bc9c03011"
+version = "1.12.0"
+
+[[deps.LaTeXStrings]]
+git-tree-sha1 = "f88f3ccef05a6a72a0cf0ed417c8fd68530f4ab2"
+uuid = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
+version = "1.4.1"
 
 [[deps.Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
@@ -247,14 +356,67 @@ deps = ["Libdl", "OpenBLAS_jll", "libblastrampoline_jll"]
 uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 version = "1.12.0"
 
+[[deps.Markdown]]
+deps = ["Base64", "JuliaSyntaxHighlighting", "StyledStrings"]
+uuid = "d6f4376e-aef5-505a-96c1-9c027394607a"
+version = "1.11.0"
+
+[[deps.Missings]]
+deps = ["DataAPI"]
+git-tree-sha1 = "ec4f7fbeab05d7747bdf98eb74d130a2a2ed298d"
+uuid = "e1d29d7a-bbdc-5cf2-9ac0-f12de2c33e28"
+version = "1.2.0"
+
 [[deps.OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
 uuid = "4536629a-c528-5b80-bd46-f80d51c5b363"
 version = "0.3.29+0"
 
+[[deps.OrderedCollections]]
+git-tree-sha1 = "05f45c2e0de6259db764adbfd2f1dc6d3f8de13c"
+uuid = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+version = "2.0.1"
+
+[[deps.PooledArrays]]
+deps = ["DataAPI", "Future"]
+git-tree-sha1 = "36d8b4b899628fb92c2749eb488d884a926614d3"
+uuid = "2dfb63ee-cc39-5dd5-95bd-886bf059d720"
+version = "1.4.3"
+
+[[deps.PrecompileTools]]
+deps = ["Preferences"]
+git-tree-sha1 = "edbeefc7a4889f528644251bdb5fc9ab5348bc2c"
+uuid = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+version = "1.3.4"
+
+[[deps.Preferences]]
+deps = ["TOML"]
+git-tree-sha1 = "8b770b60760d4451834fe79dd483e318eee709c4"
+uuid = "21216c6a-2e73-6563-6e65-726566657250"
+version = "1.5.2"
+
+[[deps.PrettyTables]]
+deps = ["Crayons", "LaTeXStrings", "Markdown", "PrecompileTools", "Printf", "REPL", "Reexport", "StringManipulation", "Tables"]
+git-tree-sha1 = "1b8aa19f229b1cea7fc93874a52e49db6a854450"
+uuid = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
+version = "3.4.8"
+
+    [deps.PrettyTables.extensions]
+    PrettyTablesExcelExt = "XLSX"
+    PrettyTablesTypstryExt = "Typstry"
+
+    [deps.PrettyTables.weakdeps]
+    Typstry = "f0ed7684-a786-439e-b1e3-3b82803b501e"
+    XLSX = "fdbf4ff8-1666-58a4-91e7-1b58723a45e0"
+
 [[deps.Printf]]
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+version = "1.11.0"
+
+[[deps.REPL]]
+deps = ["InteractiveUtils", "JuliaSyntaxHighlighting", "Markdown", "Sockets", "StyledStrings", "Unicode"]
+uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 version = "1.11.0"
 
 [[deps.Random]]
@@ -262,9 +424,30 @@ deps = ["SHA"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 version = "1.11.0"
 
+[[deps.Reexport]]
+git-tree-sha1 = "45e428421666073eab6f2da5c9d310d99bb12f9b"
+uuid = "189a3867-3050-52da-a836-e630ba90ab69"
+version = "1.2.2"
+
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 version = "0.7.0"
+
+[[deps.SentinelArrays]]
+deps = ["Dates", "Random"]
+git-tree-sha1 = "084c47c7c5ce5cfecefa0a98dff69eb3646b5a80"
+uuid = "91c51154-3ec4-41a3-a24f-3f23e20d615c"
+version = "1.4.10"
+
+[[deps.Sockets]]
+uuid = "6462fe0b-24de-5631-8697-dd941f90decc"
+version = "1.11.0"
+
+[[deps.SortingAlgorithms]]
+deps = ["DataStructures"]
+git-tree-sha1 = "13cd91cc9be159e3f4d95b857fa2aa383b53772a"
+uuid = "a2af1166-a08f-5f64-846c-94a0d3cef48c"
+version = "1.2.3"
 
 [[deps.Statistics]]
 deps = ["LinearAlgebra"]
@@ -277,6 +460,38 @@ version = "1.11.5"
 
     [deps.Statistics.weakdeps]
     SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+
+[[deps.StringManipulation]]
+deps = ["PrecompileTools"]
+git-tree-sha1 = "773065c6e0e903924a9d838259be74338422aef2"
+uuid = "892a3eda-7b42-436c-8928-eab12a02cf0e"
+version = "0.5.0"
+
+[[deps.StyledStrings]]
+uuid = "f489334b-da3d-4c2e-b8f0-e476e12c162b"
+version = "1.11.0"
+
+[[deps.TOML]]
+deps = ["Dates"]
+uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+version = "1.0.3"
+
+[[deps.TableTraits]]
+deps = ["IteratorInterfaceExtensions"]
+git-tree-sha1 = "c06b2f539df1c6efa794486abfb6ed2022561a39"
+uuid = "3783bdb8-4a98-5b6b-af9a-565f29a5fe9c"
+version = "1.0.1"
+
+[[deps.Tables]]
+deps = ["DataAPI", "DataValueInterfaces", "IteratorInterfaceExtensions", "OrderedCollections", "TableTraits"]
+git-tree-sha1 = "a94d9bdda1b7bed0046cea645639ab3f62196fac"
+uuid = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
+version = "1.14.0"
+
+[[deps.UUIDs]]
+deps = ["Random", "SHA"]
+uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+version = "1.11.0"
 
 [[deps.Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
